@@ -27,7 +27,17 @@ export default function MusicRoom() {
   const initialSyncData = useRef(null);
   const chatScrollRef = useRef(null);
   const [playerError, setPlayerError] = useState(false);
-  const [playerKey, setPlayerKey] = useState(0); // force remount player on retry
+  const [playerKey, setPlayerKey] = useState(0); // kept for compatibility
+  const [showPlayer, setShowPlayer] = useState(true);
+
+  const remountPlayer = (delay = 200) => {
+    setShowPlayer(false);
+    setTimeout(() => {
+      setPlayerError(false);
+      setPlayerKey(k => k + 1);
+      setShowPlayer(true);
+    }, delay);
+  };
 
   useEffect(() => {
     const savedUser = localStorage.getItem('amethyx_user');
@@ -58,8 +68,7 @@ export default function MusicRoom() {
         setRoomOwner(data.owner);
         setQueue(data.playlist || []);
         if ((data.playlist || []).length > 0) {
-          setPlayerError(false);
-          setPlayerKey(k => k + 1);
+          remountPlayer(250);
         }
         initialSyncData.current = { status: data.status, videoTime: data.videoTime };
         if (playerRef.current && data.playlist.length > 0) {
@@ -74,8 +83,8 @@ export default function MusicRoom() {
 
     socketRef.current.on('queue_updated', (updatedPlaylist) => {
       setQueue(updatedPlaylist);
-      setPlayerError(false);
-      setPlayerKey(k => k + 1);
+      // remount to ensure iframe reloads cleanly
+      remountPlayer(200);
     });
     socketRef.current.on('change_song', (updatedPlaylist) => setQueue(updatedPlaylist));
     

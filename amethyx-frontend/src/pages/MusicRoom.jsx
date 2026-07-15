@@ -82,11 +82,25 @@ export default function MusicRoom() {
     });
 
     socketRef.current.on('queue_updated', (updatedPlaylist) => {
-      setQueue(updatedPlaylist);
-      // remount to ensure iframe reloads cleanly
-      remountPlayer(200);
+      setQueue(prev => {
+        const prevFirst = (prev && prev.length > 0) ? prev[0] : null;
+        const newFirst = (updatedPlaylist && updatedPlaylist.length > 0) ? updatedPlaylist[0] : null;
+        if (prevFirst !== newFirst) {
+          // only remount when the currently playing video changed
+          remountPlayer(200);
+        }
+        return updatedPlaylist;
+      });
     });
-    socketRef.current.on('change_song', (updatedPlaylist) => setQueue(updatedPlaylist));
+
+    socketRef.current.on('change_song', (updatedPlaylist) => {
+      setQueue(prev => {
+        const prevFirst = (prev && prev.length > 0) ? prev[0] : null;
+        const newFirst = (updatedPlaylist && updatedPlaylist.length > 0) ? updatedPlaylist[0] : null;
+        if (prevFirst !== newFirst) remountPlayer(150);
+        return updatedPlaylist;
+      });
+    });
     
     socketRef.current.on('sync_state', ({ status, videoTime }) => {
       applySync(status, videoTime);
@@ -276,17 +290,19 @@ export default function MusicRoom() {
                     </div>
                   </div>
                 ) : (
-                  <YouTube 
-                    key={playerKey}
-                    videoId={queue[0]} 
-                    opts={{ width: '100%', height: '100%', playerVars: { autoplay: 1, controls: 1, rel: 0, enablejsapi: 1, origin: window.location.origin } }} 
-                    className="w-full h-full"
-                    containerClassName="w-full h-full pointer-events-auto"
-                    onReady={onPlayerReady} 
-                    onStateChange={onPlayerStateChange} 
-                    onEnd={handleSongEnd}
-                    onError={onPlayerError}
-                  />
+                  showPlayer ? (
+                    <YouTube 
+                      key={playerKey}
+                      videoId={queue[0]} 
+                      opts={{ width: '100%', height: '100%', playerVars: { autoplay: 1, controls: 1, rel: 0, enablejsapi: 1, origin: window.location.origin } }} 
+                      className="w-full h-full"
+                      containerClassName="w-full h-full pointer-events-auto"
+                      onReady={onPlayerReady} 
+                      onStateChange={onPlayerStateChange} 
+                      onEnd={handleSongEnd}
+                      onError={onPlayerError}
+                    />
+                  ) : null
                 )
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-gray-500 gap-2">

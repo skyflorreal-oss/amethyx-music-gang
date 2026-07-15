@@ -127,6 +127,16 @@ function Home() {
       setVotes(serverVotes);
     });
 
+    // เมื่อสร้างห้องสำเร็จ ให้เลื่อนไปยังหน้าห้องอัตโนมัติ
+    socket.on('room_created_success', (roomId) => {
+      navigate(`/room/${roomId}`);
+    });
+
+    // อัปเดตรายการห้องเมื่อ backend แจ้ง
+    socket.on('room_list_updated', () => {
+      fetchRooms();
+    });
+
     return () => {
       socket.off('sync_wheel');
       socket.off('wheel_spinning_start');

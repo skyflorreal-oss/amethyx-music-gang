@@ -37,10 +37,14 @@ export default function MusicRoom() {
     const userObj = JSON.parse(savedUser);
     setCurrentUser(userObj);
 
-    // เชื่อมต่อ Socket.io พร้อมเปิดใช้งาน credentials ป้องกันปัญหาข้ามโดเมน
-    socketRef.current = io(SOCKET_URL, {
-      withCredentials: true
-    });
+    // เชื่อมต่อ Socket.io (ถ้ามี instance เดิมจาก App ให้ใช้ตัวนั้นกลับมา)
+    if (window.socket) {
+      socketRef.current = window.socket;
+    } else {
+      socketRef.current = io(SOCKET_URL, { withCredentials: true });
+      // store global instance for other pages
+      window.socket = socketRef.current;
+    }
     
     socketRef.current.emit('join_room', { roomId, user: userObj });
 

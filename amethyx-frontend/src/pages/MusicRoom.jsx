@@ -68,7 +68,11 @@ export default function MusicRoom() {
       setMembers(updatedMembers);
     });
 
-    socketRef.current.on('queue_updated', (updatedPlaylist) => setQueue(updatedPlaylist));
+    socketRef.current.on('queue_updated', (updatedPlaylist) => {
+      setQueue(updatedPlaylist);
+      setPlayerError(false);
+      setPlayerKey(k => k + 1);
+    });
     socketRef.current.on('change_song', (updatedPlaylist) => setQueue(updatedPlaylist));
     
     socketRef.current.on('sync_state', ({ status, videoTime }) => {
@@ -79,11 +83,7 @@ export default function MusicRoom() {
       setMessages((prev) => [...prev, chatData]);
     });
 
-    // ถ้า server แจ้ง playlist ใหม่ ให้ล้างข้อผิดพลาดของ player (ลองแสดง/โหลดอีกครั้ง)
-    socketRef.current.on('queue_updated', (updatedPlaylist) => {
-      setPlayerError(false);
-      setPlayerKey(k => k + 1);
-    });
+    // (queue_updated consolidated above)
 
     socketRef.current.on('room_deleted', () => {
       alert('เจ้าของห้องได้ทำการลบห้องนี้แล้ว!');
@@ -108,7 +108,20 @@ export default function MusicRoom() {
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      if (socketRef.current) socketRef.current.disconnect();
+      if (socketRef.current) {
+        // แจ้ง server ว่าออกจากห้อง โดยไม่ตัดการเชื่อมต่อ global socket
+        socketRef.current.emit('leave_room', { roomId, username: userObj.username });
+
+        // ลบ listeners ที่เพิ่มไว้ใน effect นี้ เพื่อป้องกัน duplicate เมื่อกลับมาอีกครั้ง
+        socketRef.current.off('room_data');
+        socketRef.current.off('update_members');
+        socketRef.current.off('queue_updated');
+        socketRef.current.off('change_song');
+        socketRef.current.off('sync_state');
+        socketRef.current.off('receive_message');
+        socketRef.current.off('room_deleted');
+        socketRef.current.off('error_message');
+      }
     };
   }, [roomId, navigate]);
 

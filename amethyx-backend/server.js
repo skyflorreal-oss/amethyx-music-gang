@@ -207,6 +207,16 @@ io.on('connection', (socket) => {
         }
     });
 
+    // ผู้เล่นออกจากห้องโดยไม่ปิดการเชื่อมต่อ (เช่น กดออกห้อง)
+    socket.on('leave_room', ({ roomId, username }) => {
+        if (activeRooms[roomId] && activeRooms[roomId].members) {
+            activeRooms[roomId].members = activeRooms[roomId].members.filter(m => m.socketId !== socket.id && m.username !== username);
+            io.to(roomId).emit('update_members', activeRooms[roomId].members);
+            io.emit('room_list_updated');
+        }
+        try { socket.leave(roomId); } catch (e) {}
+    });
+
     // เพิ่มตัวรับ event สำหรับ Wheel / Opinion / Vote และเก็บสถานะบนเซิร์ฟเวอร์
     socket.on('update_wheel', (items) => {
         serverWheelItems = items;

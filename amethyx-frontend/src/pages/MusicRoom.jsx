@@ -27,25 +27,18 @@ export default function MusicRoom() {
   const initialSyncData = useRef(null);
   const chatScrollRef = useRef(null);
   const [playerError, setPlayerError] = useState(false);
-  const [playerKey, setPlayerKey] = useState(0); // kept for compatibility
-  const [showPlayer, setShowPlayer] = useState(true);
   const [playerErrorCode, setPlayerErrorCode] = useState(null);
+  const [playerKey, setPlayerKey] = useState(0); // force remount counter
+  const [showPlayer, setShowPlayer] = useState(true);
 
-  const remountPlayer = (delay = 200) => {
-    // destroy existing player cleanly before unmounting
-    try {
-      if (playerRef.current && typeof playerRef.current.destroy === 'function') {
-        playerRef.current.destroy();
-      }
-    } catch (e) {
-      console.warn('Error destroying player before remount', e);
-    }
+  const remountPlayer = (delay = 150) => {
     playerRef.current = null;
     setShowPlayer(false);
+
     setTimeout(() => {
       setPlayerError(false);
       setPlayerErrorCode(null);
-      setPlayerKey(k => k + 1);
+      setPlayerKey((k) => k + 1);
       setShowPlayer(true);
     }, delay);
   };
@@ -78,12 +71,10 @@ export default function MusicRoom() {
         setRoomName(data.roomName);
         setRoomOwner(data.owner);
         setQueue(data.playlist || []);
-        if ((data.playlist || []).length > 0) {
-          remountPlayer(250);
-        }
-        initialSyncData.current = { status: data.status, videoTime: data.videoTime };
-        if (playerRef.current && data.playlist.length > 0) {
-            applySync(data.status, data.videoTime);
+        const syncData = { status: data.status, videoTime: data.videoTime };
+        initialSyncData.current = syncData;
+        if (playerRef.current) {
+          applySync(syncData.status, syncData.videoTime);
         }
       }
     });

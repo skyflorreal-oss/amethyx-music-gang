@@ -175,13 +175,13 @@ export default function MusicRoom() {
     }
   }, [messages]);
 
-  const applySync = (status, videoTime) => {
+  const applySync = ({ status, videoTime }) => {
     if (!playerRef.current) return;
-    isSyncingRef.current = true; 
+    isSyncingRef.current = true;
 
     if (typeof playerRef.current.getCurrentTime === 'function') {
       const currentTime = playerRef.current.getCurrentTime();
-      if (Math.abs(currentTime - videoTime) > 1.5) {
+      if (typeof videoTime === 'number' && Math.abs(currentTime - videoTime) > 1.5) {
           playerRef.current.seekTo(videoTime, true);
       }
 
@@ -204,12 +204,20 @@ export default function MusicRoom() {
     console.error('YouTube player error', event.data);
     const code = event.data;
     setPlayerErrorCode(code);
-    // 101 and 150 are embed-blocking errors; 100 means video not found
-    if (code === 101 || code === 150 || code === 100) {
-      setPlayerError(true);
-      // do not auto-remount for these codes — provide user action
+
+    if (code === 101 || code === 150) {
+      console.warn('วิดีโอนี้ไม่อนุญาตให้เล่นภายนอก กำลังข้ามไปยังเพลงถัดไป...');
+      if (socketRef.current) {
+        socketRef.current.emit('next_song', { roomId });
+      }
       return;
     }
+
+    if (code === 100) {
+      setPlayerError(true);
+      return;
+    }
+
     // other transient errors: attempt a single remount
     setPlayerError(true);
     setTimeout(() => remountPlayer(300), 800);

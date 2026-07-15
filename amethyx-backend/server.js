@@ -149,6 +149,8 @@ io.on('connection', (socket) => {
         if (activeRooms[roomId].status === 1) {
             const elapsedSeconds = (Date.now() - activeRooms[roomId].lastUpdatedAt) / 1000;
             currentServerTime += elapsedSeconds;
+            activeRooms[roomId].videoTime = currentServerTime;
+            activeRooms[roomId].lastUpdatedAt = Date.now();
         }
 
         socket.emit('room_data', {

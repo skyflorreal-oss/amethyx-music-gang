@@ -15,7 +15,7 @@ app.get('/', (req, res) => {
 
 const server = http.createServer(app);
 
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,https://amethyx-music-gang.onrender.com,https://www.amethyx-music-gang.onrender.com")
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,https://amethyx-music-gang.onrender.com,https://www.amethyx-music-gang.onrender.com,https://amethyx-music-gang-b5i9.vercel.app")
     .split(',')
     .map(origin => origin.trim())
     .filter(Boolean);

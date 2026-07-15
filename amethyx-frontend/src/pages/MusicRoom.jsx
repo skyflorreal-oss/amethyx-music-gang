@@ -5,6 +5,13 @@ import { io } from 'socket.io-client';
 
 const SOCKET_URL = import.meta.env.VITE_API_URL || 'https://amethyx-music-gang.onrender.com';
 
+// รายชื่อ Public Piped API สำรองหลายๆ ตัว ป้องกันปัญหาเซิร์ฟเวอร์หลักล่มหรือตอบสนองช้า
+const PIPED_INSTANCES = [
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.yt.privacyredirect.com',
+  'https://api.piped.privacy.com.de'
+];
+
 export default function MusicRoom() {
   const { roomId } = useParams();
   const navigate = useNavigate();
@@ -30,28 +37,42 @@ export default function MusicRoom() {
   const [songTitle, setSongTitle] = useState('กำลังโหลดเพลง...');
   const [playerError, setPlayerError] = useState(false);
 
-  // ฟังก์ชันดึงลิงก์เสียงตรงผ่าน Piped API (ข้ามข้อจำกัดลิขสิทธิ์/Embed แบบ FiveM)
+  // ฟังก์ชันดึงลิงก์เสียงผ่าน Piped API พร้อมระบบสลับเซิร์ฟเวอร์และ Timeout[cite: 4]
   const fetchAudioStream = async (videoId) => {
     if (!videoId) return;
     setPlayerError(false);
     setSongTitle('กำลังประมวลผลสตรีมเสียง...');
     
-    try {
-      const response = await fetch(`https://pipedapi.kavin.rocks/streams/${videoId}`);
-      const data = await response.json();
-      
-      if (data && data.audioStreams && data.audioStreams.length > 0) {
-        // เลือกเสียงคุณภาพสูงที่สุด
-        const bestAudio = data.audioStreams.reduce((prev, curr) => (prev.bitrate > curr.bitrate) ? prev : curr);
-        setCurrentAudioUrl(bestAudio.url);
-        setSongTitle(data.title || `วิดีโอ ID: ${videoId}`);
-      } else {
-        throw new Error('ไม่พบสตรีมเสียง');
+    let success = false;
+
+    for (const instance of PIPED_INSTANCES) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // รอไม่เกิน 5 วินาทีต่อตัว
+
+        const response = await fetch(`${instance}/streams/${videoId}`, {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        const data = await response.json();
+        
+        if (data && data.audioStreams && data.audioStreams.length > 0) {
+          const bestAudio = data.audioStreams.reduce((prev, curr) => (prev.bitrate > curr.bitrate) ? prev : curr);
+          setCurrentAudioUrl(bestAudio.url);
+          setSongTitle(data.title || `วิดีโอ ID: ${videoId}`);
+          success = true;
+          break; // เจอเซิร์ฟเวอร์ที่ใช้งานได้แล้ว หยุดวนลูปทันที
+        }
+      } catch (error) {
+        console.warn(`Instance ${instance} มีปัญหา กำลังลองตัวถัดไป...`);
       }
-    } catch (error) {
-      console.error('ไม่สามารถดึงสตรีมเสียงได้:', error);
+    }
+
+    if (!success) {
+      console.error('ทุกเซิร์ฟเวอร์ Piped ไม่ตอบสนอง');
       setPlayerError(true);
-      setSongTitle('ไม่สามารถเล่นเพลงนี้ได้');
+      setSongTitle('ไม่สามารถเชื่อมต่อสตรีมเสียงได้');
     }
   };
 

@@ -8,6 +8,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// เพิ่ม Route สำหรับหน้าแรก (แก้ปัญหา Cannot GET /)
+app.get('/', (req, res) => {
+    res.send('AMETHYX Backend is running successfully! 🚀');
+});
+
 const server = http.createServer(app);
 
 const io = new Server(server, {
@@ -96,7 +101,6 @@ io.on('connection', (socket) => {
         
         // บันทึกสมาชิกในห้อง
         if (!activeRooms[roomId].members) activeRooms[roomId].members = [];
-        // ลบอันเก่าถ้ามี แล้วเพิ่มใหม่
         activeRooms[roomId].members = activeRooms[roomId].members.filter(m => m.username !== user.username);
         activeRooms[roomId].members.push({ socketId: socket.id, ...user });
 
@@ -197,6 +201,7 @@ io.on('connection', (socket) => {
     });
 });
 
-server.listen(5000, () => {
-    console.log(`🎯 AMETHYX Backend พร้อมทำงานที่พอร์ต 5000`);
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
+    console.log(`🎯 AMETHYX Backend พร้อมทำงานที่พอร์ต ${PORT}`);
 });

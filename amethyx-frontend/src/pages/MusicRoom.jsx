@@ -26,6 +26,8 @@ export default function MusicRoom() {
   const isSyncingRef = useRef(false);
   const initialSyncData = useRef(null);
   const chatScrollRef = useRef(null);
+  const [playerError, setPlayerError] = useState(false);
+  const [playerKey, setPlayerKey] = useState(0); // force remount player on retry
 
   useEffect(() => {
     const savedUser = localStorage.getItem('amethyx_user');
@@ -47,6 +49,8 @@ export default function MusicRoom() {
     }
     
     socketRef.current.emit('join_room', { roomId, user: userObj });
+    // ขอข้อมูลซิงก์ล่าสุดจากเซิร์ฟเวอร์เพื่อความแน่นอน
+    socketRef.current.emit('request_initial_sync');
 
     socketRef.current.on('room_data', (data) => {
       if (data) {
@@ -73,6 +77,12 @@ export default function MusicRoom() {
 
     socketRef.current.on('receive_message', (chatData) => {
       setMessages((prev) => [...prev, chatData]);
+    });
+
+    // ถ้า server แจ้ง playlist ใหม่ ให้ล้างข้อผิดพลาดของ player (ลองแสดง/โหลดอีกครั้ง)
+    socketRef.current.on('queue_updated', (updatedPlaylist) => {
+      setPlayerError(false);
+      setPlayerKey(k => k + 1);
     });
 
     socketRef.current.on('room_deleted', () => {
@@ -131,6 +141,13 @@ export default function MusicRoom() {
       }
     }
     setTimeout(() => { isSyncingRef.current = false; }, 500);
+  };
+
+  const onPlayerError = (event) => {
+    console.error('YouTube player error', event.data);
+    setPlayerError(true);
+    // try remounting player once to recover
+    setTimeout(() => setPlayerKey(k => k + 1), 800);
   };
 
   const onPlayerReady = (event) => {
@@ -224,15 +241,27 @@ export default function MusicRoom() {
           <div className="bg-white/[0.02] border border-white/5 backdrop-blur-xl rounded-3xl p-6 shadow-2xl">
             <div className="aspect-video rounded-2xl overflow-hidden bg-black/40 mb-4 border border-white/5">
               {queue.length > 0 ? (
-                <YouTube 
-                  videoId={queue[0]} 
-                  opts={{ width: '100%', height: '100%', playerVars: { autoplay: 1, controls: 1, rel: 0, enablejsapi: 1, origin: window.location.origin } }} 
-                  className="w-full h-full"
-                  containerClassName="w-full h-full pointer-events-auto"
-                  onReady={onPlayerReady} 
-                  onStateChange={onPlayerStateChange} 
-                  onEnd={handleSongEnd}
-                />
+                playerError ? (
+                  <div className="h-full flex items-center justify-center text-gray-400">
+                    <div className="text-center">
+                      <p className="mb-2">ไม่สามารถโหลดวิดีโอได้ (YouTube)</p>
+                      <img src={`https://img.youtube.com/vi/${queue[0]}/hqdefault.jpg`} alt="thumb" className="mx-auto mb-2 rounded" />
+                      <button onClick={() => setPlayerKey(k => k + 1)} className="bg-purple-600 px-4 py-2 rounded">ลองโหลดใหม่</button>
+                    </div>
+                  </div>
+                ) : (
+                  <YouTube 
+                    key={playerKey}
+                    videoId={queue[0]} 
+                    opts={{ width: '100%', height: '100%', playerVars: { autoplay: 1, controls: 1, rel: 0, enablejsapi: 1, origin: window.location.origin } }} 
+                    className="w-full h-full"
+                    containerClassName="w-full h-full pointer-events-auto"
+                    onReady={onPlayerReady} 
+                    onStateChange={onPlayerStateChange} 
+                    onEnd={handleSongEnd}
+                    onError={onPlayerError}
+                  />
+                )
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-gray-500 gap-2">
                   <span className="text-4xl animate-bounce">🎵</span>

@@ -5,7 +5,7 @@ import MusicRoom from './pages/MusicRoom';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 
-const API_URL = 'http://localhost:5000';
+const API_URL = import.meta.env.VITE_API_URL || 'https://amethyx-music-gang.onrender.com';
 
 const ANONYMOUS_NAMES = [
   '🥷 นินจาไร้เงา', '🐱 แมวอ้วนสะท้านฟ้า', '👻 ผีน้อยจอมกวน', 
@@ -682,7 +682,9 @@ function Home() {
 
 export default function App() {
   useEffect(() => {
-    const socket = io('http://localhost:5000');
+    const socket = io(API_URL, {
+      withCredentials: true
+    });
     window.socket = socket;
     return () => socket.disconnect();
   }, []);

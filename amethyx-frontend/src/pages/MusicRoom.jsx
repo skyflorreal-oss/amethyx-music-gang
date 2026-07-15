@@ -4,7 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import YouTube from 'react-youtube';
 import { io } from 'socket.io-client';
 
-const SOCKET_URL = 'http://localhost:5000';
+// 🛠️ แก้ไขตรงนี้ให้ดึงค่าจาก Vercel หรือใช้ค่าสำรองไปที่ Render ทันที
+const SOCKET_URL = import.meta.env.VITE_API_URL || 'https://amethyx-music-gang.onrender.com';
 
 export default function MusicRoom() {
   const { roomId } = useParams();
@@ -36,7 +37,11 @@ export default function MusicRoom() {
     const userObj = JSON.parse(savedUser);
     setCurrentUser(userObj);
 
-    socketRef.current = io(SOCKET_URL);
+    // เชื่อมต่อ Socket.io พร้อมเปิดใช้งาน credentials ป้องกันปัญหาข้ามโดเมน
+    socketRef.current = io(SOCKET_URL, {
+      withCredentials: true
+    });
+    
     socketRef.current.emit('join_room', { roomId, user: userObj });
 
     socketRef.current.on('room_data', (data) => {

@@ -23,8 +23,9 @@ export default function MusicRoom() {
 
   const socketRef = useRef(null);
   const playerRef = useRef(null);
+  const pendingSync = useRef(null);
+  const currentSongIdRef = useRef(null);
   const isSyncingRef = useRef(false);
-  const initialSyncData = useRef(null);
   const chatScrollRef = useRef(null);
   const [playerError, setPlayerError] = useState(false);
   const [playerErrorCode, setPlayerErrorCode] = useState(null);
@@ -71,10 +72,16 @@ export default function MusicRoom() {
         setRoomName(data.roomName);
         setRoomOwner(data.owner);
         setQueue(data.playlist || []);
+
+        if (data.playlist && data.playlist.length > 0) {
+          currentSongIdRef.current = data.playlist[0];
+        }
+
         const syncData = { status: data.status, videoTime: data.videoTime };
-        initialSyncData.current = syncData;
-        if (playerRef.current) {
-          applySync(syncData.status, syncData.videoTime);
+        pendingSync.current = syncData;
+        if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
+          applySync(syncData);
+          pendingSync.current = null;
         }
       }
     });
@@ -99,13 +106,21 @@ export default function MusicRoom() {
       setQueue(prev => {
         const prevFirst = (prev && prev.length > 0) ? prev[0] : null;
         const newFirst = (updatedPlaylist && updatedPlaylist.length > 0) ? updatedPlaylist[0] : null;
-        if (prevFirst !== newFirst) remountPlayer(150);
+        if (newFirst && newFirst !== currentSongIdRef.current) {
+          currentSongIdRef.current = newFirst;
+          pendingSync.current = null;
+          remountPlayer(150);
+        }
         return updatedPlaylist;
       });
     });
     
-    socketRef.current.on('sync_state', ({ status, videoTime }) => {
-      applySync(status, videoTime);
+    socketRef.current.on('sync_state', (syncData) => {
+      if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
+        applySync(syncData);
+      } else {
+        pendingSync.current = syncData;
+      }
     });
 
     socketRef.current.on('receive_message', (chatData) => {
@@ -202,8 +217,11 @@ export default function MusicRoom() {
 
   const onPlayerReady = (event) => {
     playerRef.current = event.target;
-    if (initialSyncData.current) {
-        applySync(initialSyncData.current.status, initialSyncData.current.videoTime);
+    if (pendingSync.current) {
+      applySync(pendingSync.current);
+      pendingSync.current = null;
+    } else {
+      playerRef.current.playVideo();
     }
   };
 

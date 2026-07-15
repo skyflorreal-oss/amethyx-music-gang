@@ -191,7 +191,13 @@ io.on('connection', (socket) => {
             activeRooms[roomId].lastUpdatedAt = Date.now();
             io.to(roomId).emit('change_song', activeRooms[roomId].playlist);
             if (activeRooms[roomId].playlist.length > 0) {
-                io.to(roomId).emit('sync_state', { status: 1, videoTime: 0 });
+                setTimeout(() => {
+                    if (!activeRooms[roomId] || activeRooms[roomId].playlist.length === 0) return;
+                    activeRooms[roomId].status = 1;
+                    activeRooms[roomId].videoTime = 0;
+                    activeRooms[roomId].lastUpdatedAt = Date.now();
+                    io.to(roomId).emit('sync_state', { status: 1, videoTime: 0 });
+                }, 150);
             }
         }
     });

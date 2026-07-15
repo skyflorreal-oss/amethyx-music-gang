@@ -94,12 +94,13 @@ function Home() {
     const socket = window.socket;
     if (!socket) return;
 
-    // รับข้อมูลวงล้ออัปเดตจากเซิร์ฟเวอร์
+    // เมื่อเชื่อมต่อสำเร็จ ให้ขอข้อมูลล่าสุดจากเซิร์ฟเวอร์ทันที ป้องกันข้อมูลไม่ตรงกัน
+    socket.emit('request_initial_sync');
+
     socket.on('sync_wheel', (items) => {
       setWheelItems(items);
     });
 
-    // รับคำสั่งสั่งหมุนวงล้อพร้อมกัน
     socket.on('wheel_spinning_start', ({ winner }) => {
       setSpinning(true);
       setWheelResult(null);
@@ -109,14 +110,10 @@ function Home() {
       }, 1500);
     });
 
-    // รับความคิดเห็นใหม่แบบเรียลไทม์ (กรอง 24 ชม.)
     socket.on('sync_opinions', (serverOpinions) => {
-      const now = Date.now();
-      const validOpinions = serverOpinions.filter(op => (now - op.id) < 24 * 60 * 60 * 1000);
-      setOpinions(validOpinions);
+      setOpinions(serverOpinions);
     });
 
-    // รับผลโหวตอัปเดตแบบเรียลไทม์
     socket.on('sync_votes', (serverVotes) => {
       setVotes(serverVotes);
     });

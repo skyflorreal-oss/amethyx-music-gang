@@ -32,6 +32,21 @@ const io = new Server(server, {
 const users = []; // เก็บข้อมูลสมาชิก [{username, password, firstName, lastName, status}]
 const activeRooms = {}; // เก็บข้อมูลห้อง { roomId: { roomName, password, owner, playlist, status, videoTime, lastUpdatedAt, members: [] } }
 
+// State สำหรับระบบวงล้อ / บอร์ดความคิดเห็น / โหวต (เก็บบนเซิร์ฟเวอร์เพื่อให้ผู้ที่เพิ่งเชื่อมต่อได้รับข้อมูลล่าสุด)
+let serverWheelItems = ['กินชาบู', 'ดูหนังผี', 'ร้องคาราโอเกะ', 'พักผ่อนนอนหลับ', 'เล่นเกมยาวไป'];
+let serverOpinions = [];
+let serverVotes = [
+    {
+        id: 1,
+        topic: 'คืนนี้จัดแนวเพลงอะไรกันดี?',
+        creator: 'แซม',
+        options: [
+            { text: 'LO-FI / Chillhop', votes: 4, voters: ['user1', 'user2'] },
+            { text: 'Hip Hop / Rap', votes: 2, voters: ['user3'] }
+        ]
+    }
+];
+
 // API: สมัครสมาชิก
 app.post('/api/register', (req, res) => {
     const { username, password, firstName, lastName, status } = req.body;
@@ -68,6 +83,21 @@ app.get('/api/rooms', (req, res) => {
 // Socket.io จัดการ Real-time
 io.on('connection', (socket) => {
     console.log(`📡 เชื่อมต่อ: ${socket.id}`);
+
+    // ฟังก์ชันส่งข้อมูลทั้งหมดให้ Client ทันทีที่ขอมาหรือเชื่อมต่อใหม่
+    const sendSyncData = () => {
+        socket.emit('sync_wheel', serverWheelItems);
+        socket.emit('sync_opinions', serverOpinions);
+        socket.emit('sync_votes', serverVotes);
+    };
+
+    // ส่งข้อมูลรอบแรกตอนต่อติด
+    sendSyncData();
+
+    // รองรับการขอซิงก์ข้อมูลซ้ำจากฝั่ง Client
+    socket.on('request_initial_sync', () => {
+        sendSyncData();
+    });
 
     // สร้างห้องใหม่
     socket.on('create_room', ({ roomName, password, owner }) => {
@@ -177,21 +207,24 @@ io.on('connection', (socket) => {
         }
     });
 
-    // เพิ่มตัวรับ event สำหรับ Wheel / Opinion / Vote ให้รองรับการซิงก์ข้ามเครื่อง
+    // เพิ่มตัวรับ event สำหรับ Wheel / Opinion / Vote และเก็บสถานะบนเซิร์ฟเวอร์
     socket.on('update_wheel', (items) => {
-        socket.broadcast.emit('sync_wheel', items);
+        serverWheelItems = items;
+        io.emit('sync_wheel', serverWheelItems);
     });
 
-    socket.on('spin_wheel', (data) => {
-        io.emit('wheel_spinning_start', data);
+    socket.on('spin_wheel', ({ winner }) => {
+        io.emit('wheel_spinning_start', { winner });
     });
 
     socket.on('post_opinion', (opinions) => {
-        socket.broadcast.emit('sync_opinions', opinions);
+        serverOpinions = opinions;
+        io.emit('sync_opinions', serverOpinions);
     });
 
     socket.on('update_votes', (votes) => {
-        socket.broadcast.emit('sync_votes', votes);
+        serverVotes = votes;
+        io.emit('sync_votes', serverVotes);
     });
 
     socket.on('disconnect', () => {

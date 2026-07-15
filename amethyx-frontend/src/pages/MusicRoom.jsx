@@ -29,11 +29,22 @@ export default function MusicRoom() {
   const [playerError, setPlayerError] = useState(false);
   const [playerKey, setPlayerKey] = useState(0); // kept for compatibility
   const [showPlayer, setShowPlayer] = useState(true);
+  const [playerErrorCode, setPlayerErrorCode] = useState(null);
 
   const remountPlayer = (delay = 200) => {
+    // destroy existing player cleanly before unmounting
+    try {
+      if (playerRef.current && typeof playerRef.current.destroy === 'function') {
+        playerRef.current.destroy();
+      }
+    } catch (e) {
+      console.warn('Error destroying player before remount', e);
+    }
+    playerRef.current = null;
     setShowPlayer(false);
     setTimeout(() => {
       setPlayerError(false);
+      setPlayerErrorCode(null);
       setPlayerKey(k => k + 1);
       setShowPlayer(true);
     }, delay);
@@ -185,9 +196,17 @@ export default function MusicRoom() {
 
   const onPlayerError = (event) => {
     console.error('YouTube player error', event.data);
+    const code = event.data;
+    setPlayerErrorCode(code);
+    // 101 and 150 are embed-blocking errors; 100 means video not found
+    if (code === 101 || code === 150 || code === 100) {
+      setPlayerError(true);
+      // do not auto-remount for these codes — provide user action
+      return;
+    }
+    // other transient errors: attempt a single remount
     setPlayerError(true);
-    // try remounting player once to recover
-    setTimeout(() => setPlayerKey(k => k + 1), 800);
+    setTimeout(() => remountPlayer(300), 800);
   };
 
   const onPlayerReady = (event) => {
@@ -284,10 +303,14 @@ export default function MusicRoom() {
                 playerError ? (
                   <div className="h-full flex items-center justify-center text-gray-400">
                     <div className="text-center">
-                      <p className="mb-2">ไม่สามารถโหลดวิดีโอได้ (YouTube)</p>
-                      <img src={`https://img.youtube.com/vi/${queue[0]}/hqdefault.jpg`} alt="thumb" className="mx-auto mb-2 rounded" />
-                      <button onClick={() => setPlayerKey(k => k + 1)} className="bg-purple-600 px-4 py-2 rounded">ลองโหลดใหม่</button>
-                    </div>
+                        <p className="mb-2">ไม่สามารถโหลดวิดีโอได้ (YouTube)</p>
+                        <img src={`https://img.youtube.com/vi/${queue[0]}/hqdefault.jpg`} alt="thumb" className="mx-auto mb-2 rounded" />
+                        <div className="flex gap-2 justify-center">
+                          <button onClick={() => remountPlayer(200)} className="bg-purple-600 px-4 py-2 rounded">ลองโหลดใหม่</button>
+                          <a href={`https://www.youtube.com/watch?v=${queue[0]}`} target="_blank" rel="noreferrer" className="bg-white/5 border border-white/10 px-4 py-2 rounded text-xs">เปิดบน YouTube</a>
+                        </div>
+                        {playerErrorCode && <p className="text-[11px] text-gray-400 mt-2">Error code: {playerErrorCode}</p>}
+                      </div>
                   </div>
                 ) : (
                   showPlayer ? (

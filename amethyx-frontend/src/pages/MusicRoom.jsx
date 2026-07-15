@@ -1,16 +1,12 @@
 // src/pages/MusicRoom.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import YouTube from 'react-youtube';
 import { io } from 'socket.io-client';
 
+// 🛠️ แก้ไขตรงนี้ให้ดึงค่าจาก Vercel หรือใช้ค่าสำรองไปที่ Render ทันที
 const SOCKET_URL = import.meta.env.VITE_API_URL || 'https://amethyx-music-gang.onrender.com';
-
-// รายชื่อ Public Piped API สำรองสำหรับค้นหาและสตรีมเสียงแบบคู่ขนาน (Parallel Race)
-const PIPED_INSTANCES = [
-  'https://pipedapi.kavin.rocks',
-  'https://pipedapi.yt.privacyredirect.com',
-  'https://api.piped.privacy.com.de'
-];
+const API_URL = import.meta.env.VITE_API_URL || 'https://amethyx-music-gang.onrender.com';
 
 export default function MusicRoom() {
   const { roomId } = useParams();
@@ -22,59 +18,35 @@ export default function MusicRoom() {
   const [members, setMembers] = useState([]);
   
   const [queue, setQueue] = useState([]);
-  const [inputQuery, setInputQuery] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
   const [messages, setMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
 
   const socketRef = useRef(null);
-  const audioRef = useRef(null);
+  const playerRef = useRef(null);
   const pendingSync = useRef(null);
   const currentSongIdRef = useRef(null);
+  const errorRetryCounts = useRef({});
   const isSyncingRef = useRef(false);
   const chatScrollRef = useRef(null);
-
-  const [currentAudioUrl, setCurrentAudioUrl] = useState('');
-  const [songTitle, setSongTitle] = useState('กำลังโหลดเพลง...');
   const [playerError, setPlayerError] = useState(false);
+  const [playerErrorCode, setPlayerErrorCode] = useState(null);
+  const [playerKey, setPlayerKey] = useState(0); // force remount counter
+  const [showPlayer, setShowPlayer] = useState(true);
 
-  // ฟังก์ชันดึงสตรีมเสียงด้วยความเร็วสูง (Parallel Race ทุก Instances)[cite: 5]
-  const fetchAudioStream = async (videoId) => {
-    if (!videoId) return;
-    setPlayerError(false);
-    setSongTitle('กำลังประมวลผลสตรีมเสียง...');
-    
-    const fetchPromises = PIPED_INSTANCES.map(async (instance) => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
+  const remountPlayer = (delay = 150) => {
+    playerRef.current = null;
+    setShowPlayer(false);
 
-      try {
-        const response = await fetch(`${instance}/streams/${videoId}`, {
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-
-        const data = await response.json();
-        if (data && data.audioStreams && data.audioStreams.length > 0) {
-          const bestAudio = data.audioStreams.reduce((prev, curr) => (prev.bitrate > curr.bitrate) ? prev : curr);
-          return { url: bestAudio.url, title: data.title || `วิดีโอ ID: ${videoId}` };
-        }
-        throw new Error('No audio streams');
-      } catch (error) {
-        clearTimeout(timeoutId);
-        throw error;
-      }
-    });
-
-    try {
-      const result = await Promise.any(fetchPromises);
-      setCurrentAudioUrl(result.url);
-      setSongTitle(result.title);
-    } catch (error) {
-      console.error('ทุกเซิร์ฟเวอร์ Piped ไม่ตอบสนอง');
-      setPlayerError(true);
-      setSongTitle('ไม่สามารถเชื่อมต่อสตรีมเสียงได้');
-    }
+    setTimeout(() => {
+      setPlayerError(false);
+      setPlayerErrorCode(null);
+      setPlayerKey((k) => k + 1);
+      setShowPlayer(true);
+    }, delay);
   };
 
   useEffect(() => {
@@ -87,14 +59,17 @@ export default function MusicRoom() {
     const userObj = JSON.parse(savedUser);
     setCurrentUser(userObj);
 
+    // เชื่อมต่อ Socket.io (ถ้ามี instance เดิมจาก App ให้ใช้ตัวนั้นกลับมา)
     if (window.socket) {
       socketRef.current = window.socket;
     } else {
       socketRef.current = io(SOCKET_URL, { withCredentials: true });
+      // store global instance for other pages
       window.socket = socketRef.current;
     }
     
     socketRef.current.emit('join_room', { roomId, user: userObj });
+    // ขอข้อมูลซิงก์ล่าสุดจากเซิร์ฟเวอร์เพื่อความแน่นอน
     socketRef.current.emit('request_initial_sync');
 
     socketRef.current.on('room_data', (data) => {
@@ -104,13 +79,13 @@ export default function MusicRoom() {
         setQueue(data.playlist || []);
 
         if (data.playlist && data.playlist.length > 0) {
-          currentSongIdRef.current = data.playlist[0];
-          fetchAudioStream(data.playlist[0]);
+          currentSongIdRef.current = data.playlist[0]?.videoId;
+          errorRetryCounts.current[data.playlist[0]?.videoId] = 0;
         }
 
         const syncData = { status: data.status, videoTime: data.videoTime };
         pendingSync.current = syncData;
-        if (audioRef.current) {
+        if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
           applySync(syncData);
           pendingSync.current = null;
         }
@@ -122,22 +97,33 @@ export default function MusicRoom() {
     });
 
     socketRef.current.on('queue_updated', (updatedPlaylist) => {
-      setQueue(updatedPlaylist);
+      setQueue(prev => {
+        const prevFirst = (prev && prev.length > 0) ? prev[0]?.videoId : null;
+        const newFirst = (updatedPlaylist && updatedPlaylist.length > 0) ? updatedPlaylist[0]?.videoId : null;
+        if (prevFirst !== newFirst) {
+          // only remount when the currently playing video changed
+          remountPlayer(200);
+        }
+        return updatedPlaylist;
+      });
     });
 
     socketRef.current.on('change_song', (updatedPlaylist) => {
-      setQueue(updatedPlaylist);
-      if (updatedPlaylist && updatedPlaylist.length > 0) {
-        const newFirst = updatedPlaylist[0];
-        if (newFirst !== currentSongIdRef.current) {
+      setQueue(prev => {
+        const prevFirst = (prev && prev.length > 0) ? prev[0]?.videoId : null;
+        const newFirst = (updatedPlaylist && updatedPlaylist.length > 0) ? updatedPlaylist[0]?.videoId : null;
+        if (newFirst && newFirst !== currentSongIdRef.current) {
           currentSongIdRef.current = newFirst;
-          fetchAudioStream(newFirst);
+          errorRetryCounts.current[newFirst] = 0;
+          pendingSync.current = null;
+          remountPlayer(150);
         }
-      }
+        return updatedPlaylist;
+      });
     });
     
     socketRef.current.on('sync_state', (syncData) => {
-      if (audioRef.current) {
+      if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
         applySync(syncData);
       } else {
         pendingSync.current = syncData;
@@ -147,6 +133,8 @@ export default function MusicRoom() {
     socketRef.current.on('receive_message', (chatData) => {
       setMessages((prev) => [...prev, chatData]);
     });
+
+    // (queue_updated consolidated above)
 
     socketRef.current.on('room_deleted', () => {
       alert('เจ้าของห้องได้ทำการลบห้องนี้แล้ว!');
@@ -158,9 +146,24 @@ export default function MusicRoom() {
       navigate('/');
     });
 
+    // ป้องกันเพลงหยุดเวลาสลับหน้าจอหรือพับเว็บ
+    const handleVisibilityChange = () => {
+      if (document.hidden && playerRef.current) {
+        const state = playerRef.current.getPlayerState();
+        if (state === 2) {
+          playerRef.current.playVideo();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (socketRef.current) {
+        // แจ้ง server ว่าออกจากห้อง โดยไม่ตัดการเชื่อมต่อ global socket
         socketRef.current.emit('leave_room', { roomId, username: userObj.username });
+
+        // ลบ listeners ที่เพิ่มไว้ใน effect นี้ เพื่อป้องกัน duplicate เมื่อกลับมาอีกครั้ง
         socketRef.current.off('room_data');
         socketRef.current.off('update_members');
         socketRef.current.off('queue_updated');
@@ -180,91 +183,118 @@ export default function MusicRoom() {
   }, [messages]);
 
   const applySync = ({ status, videoTime }) => {
-    if (!audioRef.current) return;
+    if (!playerRef.current) return;
     isSyncingRef.current = true;
 
-    const currentTime = audioRef.current.currentTime;
-    if (typeof videoTime === 'number' && Math.abs(currentTime - videoTime) > 1.5) {
-      audioRef.current.currentTime = videoTime;
-    }
+    if (typeof playerRef.current.getCurrentTime === 'function') {
+      const currentTime = playerRef.current.getCurrentTime();
+      if (typeof videoTime === 'number' && Math.abs(currentTime - videoTime) > 1.5) {
+          playerRef.current.seekTo(videoTime, true);
+      }
 
-    if (status === 1) {
-      audioRef.current.play().catch(() => {});
-    } else if (status === 2) {
-      audioRef.current.pause();
+      if (status === 1) {
+          playerRef.current.playVideo();
+          setTimeout(() => {
+            if (playerRef.current && playerRef.current.getPlayerState() !== 1) {
+              playerRef.current.mute();
+              playerRef.current.playVideo();
+            }
+          }, 300);
+      } else if (status === 2) {
+          playerRef.current.pauseVideo();
+      }
     }
-    
     setTimeout(() => { isSyncingRef.current = false; }, 500);
   };
 
-  const handleAudioPlay = () => {
-    if (isSyncingRef.current || !audioRef.current) return;
-    const videoTime = audioRef.current.currentTime;
-    socketRef.current.emit('update_state', { roomId, status: 1, videoTime });
-  };
+  const onPlayerError = (event) => {
+    console.error('YouTube player error', event.data);
+    const code = event.data;
+    setPlayerErrorCode(code);
 
-  const handleAudioPause = () => {
-    if (isSyncingRef.current || !audioRef.current || document.hidden) return;
-    const videoTime = audioRef.current.currentTime;
-    socketRef.current.emit('update_state', { roomId, status: 2, videoTime });
-  };
+    if (code === 101 || code === 150) {
+      const currentVideoId = queue[0]?.videoId;
+      const retries = errorRetryCounts.current[currentVideoId] || 0;
 
-  // ฟังก์ชันค้นหาเพลงจากชื่อที่พิมพ์ หรือรองรับลิงก์ YouTube เดิม[cite: 5]
-  const handleSearchAndAdd = async () => {
-    const query = inputQuery.trim();
-    if (!query || isSearching) return;
+      if (retries < 1) {
+        console.warn('พบข้อผิดพลาด 101/150 แต่จะลองโหลดวิดีโอใหม่อีกครั้งก่อน');
+        errorRetryCounts.current[currentVideoId] = retries + 1;
+        setPlayerError(false);
+        setPlayerErrorCode(null);
+        remountPlayer(300);
+        return;
+      }
 
-    // ตรวจสอบว่าเป็นลิงก์ YouTube หรือไม่ (ถ้าใช่ ให้เพิ่มเข้าคิวตรงได้เลย)
-    const regExp = /^.*(?:(?:youtu\.be\/|v\/|vi\/|u\/\w\/|embed\/|shorts\/)|(?:(?:watch)?\?v(?:i)?=|\&v(?:i)?=))([^#\&\?]*).*/;
-    const match = query.match(regExp);
-    
-    if (match && match[1].length === 11) {
-      socketRef.current.emit('add_to_queue', { roomId, videoId: match[1] });
-      setInputQuery('');
+      console.warn('วิดีโอนี้ไม่อนุญาตให้เล่นภายนอก หลังจากลองใหม่แล้ว ข้ามไปยังเพลงถัดไป...');
+      setPlayerError(true);
+      if (socketRef.current) {
+        socketRef.current.emit('next_song', { roomId });
+      }
       return;
     }
 
-    setIsSearching(true);
-    let foundVideoId = null;
+    if (code === 100) {
+      setPlayerError(true);
+      return;
+    }
 
-    const searchPromises = PIPED_INSTANCES.map(async (instance) => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
-      try {
-        const response = await fetch(`${instance}/search?q=${encodeURIComponent(query)}&filter=videos`, {
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        const data = await response.json();
-        if (data && data.items && data.items.length > 0) {
-          const firstVideo = data.items.find(item => item.type === 'stream' || item.url?.includes('/watch?v='));
-          if (firstVideo) {
-            const urlParams = new URLSearchParams(firstVideo.url.split('?')[1]);
-            const id = urlParams.get('v') || firstVideo.url.replace('/watch?v=', '');
-            if (id && id.length === 11) return id;
-          }
-        }
-        throw new Error('No search results');
-      } catch (err) {
-        clearTimeout(timeoutId);
-        throw err;
-      }
-    });
+    // other transient errors: attempt a single remount
+    setPlayerError(true);
+    setTimeout(() => remountPlayer(300), 800);
+  };
+
+  const onPlayerReady = (event) => {
+    playerRef.current = event.target;
+    if (pendingSync.current) {
+      applySync(pendingSync.current);
+      pendingSync.current = null;
+    } else {
+      playerRef.current.playVideo();
+    }
+  };
+
+  const onPlayerStateChange = (event) => {
+    if (isSyncingRef.current) return;
+    const status = event.data; 
+    
+    // หากหน้าจอถูกพับอยู่ ไม่ส่งสถานะ Pause ไปกวนคนอื่น
+    if (document.hidden && status === 2) return;
+
+    if (status === 1 || status === 2) {
+        const videoTime = event.target.getCurrentTime();
+        socketRef.current.emit('update_state', { roomId, status, videoTime });
+    }
+  };
+
+  const searchSongs = async (e) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    const query = searchTerm.trim();
+    if (!query) return;
+
+    setSearchError('');
+    setIsSearching(true);
+    setSearchResults([]);
 
     try {
-      foundVideoId = await Promise.any(searchPromises);
+      const response = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(query)}`);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || 'เกิดข้อผิดพลาดในการค้นหาเพลง');
+      }
+      setSearchResults(data);
     } catch (error) {
-      console.error('การค้นหาล้มเหลวทุกเซิร์ฟเวอร์');
+      console.error(error);
+      setSearchError(error.message || 'เกิดข้อผิดพลาดในการค้นหาเพลง');
+    } finally {
+      setIsSearching(false);
     }
+  };
 
-    setIsSearching(false);
-
-    if (foundVideoId) {
-      socketRef.current.emit('add_to_queue', { roomId, videoId: foundVideoId });
-      setInputQuery('');
-    } else {
-      alert('ไม่พบเพลงที่คุณค้นหา ลองใหม่อีกครั้งครับ!');
-    }
+  const addSongToQueue = (song) => {
+    if (!song || !song.videoId) return;
+    socketRef.current.emit('add_to_queue', { roomId, video: song });
+    setSearchTerm('');
+    setSearchResults([]);
   };
 
   const sendMessage = (e) => {
@@ -321,76 +351,106 @@ export default function MusicRoom() {
       {/* Main Grid */}
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Left Side: Audio Player & Queue */}
+        {/* Left Side: Video Player & Queue */}
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-white/[0.02] border border-white/5 backdrop-blur-xl rounded-3xl p-6 shadow-2xl">
-            <div className="aspect-video rounded-2xl overflow-hidden bg-black/40 mb-4 border border-white/5 flex flex-col items-center justify-center p-6 text-center">
+            <div className="aspect-video rounded-2xl overflow-hidden bg-black/40 mb-4 border border-white/5">
               {queue.length > 0 ? (
                 playerError ? (
-                  <div className="text-gray-400">
-                    <p className="mb-2">ไม่สามารถเล่นไฟล์เสียงนี้ได้</p>
-                    <button onClick={() => fetchAudioStream(queue[0])} className="bg-purple-600 px-4 py-2 rounded text-xs">ลองโหลดใหม่</button>
+                  <div className="h-full flex items-center justify-center text-gray-400">
+                    <div className="text-center">
+                        <p className="mb-2">ไม่สามารถโหลดวิดีโอได้ (YouTube)</p>
+                        <img src={`https://img.youtube.com/vi/${queue[0]?.videoId}/hqdefault.jpg`} alt="thumb" className="mx-auto mb-2 rounded" />
+                        <div className="flex gap-2 justify-center">
+                          <button onClick={() => remountPlayer(200)} className="bg-purple-600 px-4 py-2 rounded">ลองโหลดใหม่</button>
+                          <a href={`https://www.youtube.com/watch?v=${queue[0]?.videoId}`} target="_blank" rel="noreferrer" className="bg-white/5 border border-white/10 px-4 py-2 rounded text-xs">เปิดบน YouTube</a>
+                        </div>
+                        {playerErrorCode && <p className="text-[11px] text-gray-400 mt-2">Error code: {playerErrorCode}</p>}
+                      </div>
                   </div>
                 ) : (
-                  <div className="w-full space-y-4">
-                    <div className="w-24 h-24 mx-auto rounded-full bg-purple-600/20 border border-purple-500/30 flex items-center justify-center animate-pulse">
-                      <span className="text-4xl">🎵</span>
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-bold text-white truncate px-4">{songTitle}</h3>
-                      <p className="text-xs text-purple-300/60 mt-1">สตรีมเสียงตรง (รองรับเพลงลิขสิทธิ์)</p>
-                    </div>
-                    {currentAudioUrl && (
-                      <audio 
-                        ref={audioRef}
-                        src={currentAudioUrl}
-                        controls
-                        autoPlay
-                        className="w-full mt-4"
-                        onPlay={handleAudioPlay}
-                        onPause={handleAudioPause}
-                        onEnded={handleSongEnd}
-                      />
-                    )}
-                  </div>
+                  showPlayer ? (
+                    <YouTube 
+                      key={playerKey}
+                      videoId={queue[0]?.videoId} 
+                      opts={{
+                        width: '100%',
+                        height: '100%',
+                        playerVars: {
+                          autoplay: 1,
+                          controls: 1,
+                          rel: 0,
+                          enablejsapi: 1,
+                          origin: window.location.origin,
+                          playsinline: 1,
+                        },
+                        host: 'https://www.youtube.com'
+                      }} 
+                      className="w-full h-full"
+                      containerClassName="w-full h-full pointer-events-auto"
+                      onReady={onPlayerReady} 
+                      onStateChange={onPlayerStateChange} 
+                      onEnd={handleSongEnd}
+                      onError={onPlayerError}
+                    />
+                  ) : null
                 )
               ) : (
-                <div className="flex flex-col items-center justify-center text-gray-500 gap-2">
+                <div className="h-full flex flex-col items-center justify-center text-gray-500 gap-2">
                   <span className="text-4xl animate-bounce">🎵</span>
-                  <p className="text-sm">ยังไม่มีเพลงในคิว พิมพ์ค้นหาชื่อเพลงด้านล่างเพื่อเริ่มปาร์ตี้ได้เลย!</p>
+                  <p className="text-sm">ยังไม่มีเพลงในคิว วางลิงก์ขวามือเพื่อเริ่มปาร์ตี้กันเลย!</p>
                 </div>
               )}
             </div>
-            <h2 className="text-xl font-bold mb-1">กำลังเล่นเสียงเพลง</h2>
+            <h2 className="text-xl font-bold mb-1">กำลังเล่นมิวสิควิดีโอหลัก</h2>
             <p className="text-xs text-purple-300/60">ควบคุมเวลาและสถานะพร้อมกันทุกหน้าจอ</p>
           </div>
 
-          {/* Queue Section & Search Bar */}
+          {/* Queue Section */}
           <div className="bg-white/[0.02] border border-white/5 backdrop-blur-xl rounded-3xl p-6 shadow-2xl">
             <h3 className="text-lg font-bold mb-4 text-purple-200">คิวเพลงถัดไป ({queue.length})</h3>
             <div className="flex gap-2 mb-4">
-              <input 
-                type="text" 
-                placeholder="🔍 พิมพ์ชื่อเพลง หรือวางลิงก์ YouTube..." 
-                value={inputQuery}
-                onChange={(e) => setInputQuery(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSearchAndAdd(); }}
-                className="flex-1 bg-black/40 border border-purple-500/20 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-purple-400 transition text-white"
-              />
-              <button 
-                onClick={handleSearchAndAdd} 
-                disabled={isSearching}
-                className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 px-5 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2"
-              >
-                {isSearching ? 'กำลังค้นหา...' : '🎵 ค้นหาและต่อคิว'}
-              </button>
+              <form onSubmit={searchSongs} className="flex-1 flex gap-2">
+                <input 
+                  type="text" 
+                  placeholder="พิมพ์ชื่อเพลงหรือศิลปิน แล้วกดค้นหา..." 
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="flex-1 bg-black/40 border border-purple-500/20 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-purple-400 transition text-white"
+                />
+                <button type="submit" className="bg-purple-600 hover:bg-purple-500 px-5 py-2.5 rounded-xl text-sm font-semibold transition">
+                  {isSearching ? 'กำลังค้นหา...' : 'ค้นหา'}
+                </button>
+              </form>
             </div>
+            {searchError && <div className="text-red-300 text-xs mb-3">{searchError}</div>}
+            {searchResults.length > 0 && (
+              <div className="max-h-72 overflow-y-auto space-y-2 pr-1 mb-4">
+                {searchResults.map((song, index) => (
+                  <div key={index} className="flex items-center justify-between bg-white/[0.04] p-3 rounded-xl border border-white/5">
+                    <div className="flex items-center gap-3 overflow-hidden">
+                      <img src={song.thumbnail} alt={song.title} className="w-14 h-10 rounded-lg object-cover" />
+                      <div className="truncate">
+                        <p className="text-sm font-semibold truncate">{song.title}</p>
+                        <p className="text-[11px] text-gray-400 truncate">{song.channel} • {song.duration}</p>
+                      </div>
+                    </div>
+                    <button onClick={() => addSongToQueue(song)} className="bg-emerald-500/15 text-emerald-200 border border-emerald-500/20 px-3 py-2 rounded-xl text-xs font-semibold transition hover:bg-emerald-500/25">
+                      ต่อคิว
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="max-h-40 overflow-y-auto space-y-2 pr-1">
-              {queue.map((id, index) => (
+              {queue.map((item, index) => (
                 <div key={index} className="flex items-center justify-between bg-white/[0.03] p-3 rounded-xl border border-white/5">
-                  <div className="flex items-center gap-3 truncate">
-                    <span className="text-xs text-purple-400 font-mono font-bold">#{index + 1}</span>
-                    <p className="text-sm truncate text-gray-200">วิดีโอ ID: {id}</p>
+                  <div className="flex flex-col gap-1 overflow-hidden">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-purple-400 font-mono font-bold">#{index + 1}</span>
+                      <p className="text-sm truncate text-gray-200">{item.title}</p>
+                    </div>
+                    <p className="text-[11px] text-gray-400 truncate">{item.channel} • {item.duration}</p>
                   </div>
                   {index === 0 && <span className="text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-md border border-purple-500/30">กำลังเล่น</span>}
                 </div>

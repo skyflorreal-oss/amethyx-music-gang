@@ -80,6 +80,30 @@ app.get('/api/rooms', (req, res) => {
     res.json(roomList);
 });
 
+// API: ค้นหาเพลง YouTube ด้วยคำค้นหา
+const ytSearch = require('yt-search');
+app.get('/api/search', async (req, res) => {
+    const query = req.query.q;
+    if (!query) {
+        return res.status(400).json({ message: 'กรุณาระบุคำค้นหา' });
+    }
+
+    try {
+        const result = await ytSearch(query);
+        const videos = (result && result.videos) ? result.videos.slice(0, 10).map(video => ({
+            videoId: video.videoId,
+            title: video.title,
+            channel: video.author.name || video.author || 'Unknown',
+            duration: video.timestamp || video.duration.toString(),
+            thumbnail: video.thumbnail
+        })) : [];
+        res.json(videos);
+    } catch (error) {
+        console.error('YT search error', error);
+        res.status(500).json({ message: 'ค้นหาเพลงไม่สำเร็จ ลองใหม่อีกครั้ง' });
+    }
+});
+
 // Socket.io จัดการ Real-time
 io.on('connection', (socket) => {
     console.log(`📡 เชื่อมต่อ: ${socket.id}`);
@@ -162,10 +186,17 @@ io.on('connection', (socket) => {
         });
     });
 
-    socket.on('add_to_queue', ({ roomId, videoId }) => {
+    socket.on('add_to_queue', ({ roomId, video }) => {
         if (activeRooms[roomId]) {
             const isFirst = activeRooms[roomId].playlist.length === 0;
-            activeRooms[roomId].playlist.push(videoId);
+            const queueItem = {
+                videoId: video.videoId,
+                title: video.title,
+                channel: video.channel,
+                duration: video.duration,
+                thumbnail: video.thumbnail
+            };
+            activeRooms[roomId].playlist.push(queueItem);
             if (isFirst) {
                 activeRooms[roomId].videoTime = 0;
                 activeRooms[roomId].status = 1;

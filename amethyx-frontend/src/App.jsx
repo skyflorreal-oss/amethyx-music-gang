@@ -19,6 +19,15 @@ const ANONYMOUS_NAMES = [
   '🦩 ฟลามิงโก้ขาเดียว', '🐝 ผึ้งน้อยจอมขยัน', '🦋 ผีเสื้อราตรี'
 ];
 
+// Ensure a single Socket.IO client instance is created at module load
+if (!window.socket) {
+  try {
+    window.socket = io(API_URL, { withCredentials: true });
+  } catch (e) {
+    // fail silently in environments where `window` is not available
+  }
+}
+
 function Home() {
   const [user, setUser] = useState(null);
   const [rooms, setRooms] = useState([]);
@@ -678,14 +687,6 @@ function Home() {
 }
 
 export default function App() {
-  useEffect(() => {
-    const socket = io(API_URL, {
-      withCredentials: true
-    });
-    window.socket = socket;
-    return () => socket.disconnect();
-  }, []);
-
   return (
     <Router>
       <Routes>

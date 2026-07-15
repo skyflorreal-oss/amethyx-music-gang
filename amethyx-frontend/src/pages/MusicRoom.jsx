@@ -25,6 +25,7 @@ export default function MusicRoom() {
   const playerRef = useRef(null);
   const pendingSync = useRef(null);
   const currentSongIdRef = useRef(null);
+  const errorRetryCounts = useRef({});
   const isSyncingRef = useRef(false);
   const chatScrollRef = useRef(null);
   const [playerError, setPlayerError] = useState(false);
@@ -75,6 +76,7 @@ export default function MusicRoom() {
 
         if (data.playlist && data.playlist.length > 0) {
           currentSongIdRef.current = data.playlist[0];
+          errorRetryCounts.current[data.playlist[0]] = 0;
         }
 
         const syncData = { status: data.status, videoTime: data.videoTime };
@@ -108,6 +110,7 @@ export default function MusicRoom() {
         const newFirst = (updatedPlaylist && updatedPlaylist.length > 0) ? updatedPlaylist[0] : null;
         if (newFirst && newFirst !== currentSongIdRef.current) {
           currentSongIdRef.current = newFirst;
+          errorRetryCounts.current[newFirst] = 0;
           pendingSync.current = null;
           remountPlayer(150);
         }
@@ -206,7 +209,20 @@ export default function MusicRoom() {
     setPlayerErrorCode(code);
 
     if (code === 101 || code === 150) {
-      console.warn('วิดีโอนี้ไม่อนุญาตให้เล่นภายนอก กำลังข้ามไปยังเพลงถัดไป...');
+      const currentVideoId = queue[0];
+      const retries = errorRetryCounts.current[currentVideoId] || 0;
+
+      if (retries < 1) {
+        console.warn('พบข้อผิดพลาด 101/150 แต่จะลองโหลดวิดีโอใหม่อีกครั้งก่อน');
+        errorRetryCounts.current[currentVideoId] = retries + 1;
+        setPlayerError(false);
+        setPlayerErrorCode(null);
+        remountPlayer(300);
+        return;
+      }
+
+      console.warn('วิดีโอนี้ไม่อนุญาตให้เล่นภายนอก หลังจากลองใหม่แล้ว ข้ามไปยังเพลงถัดไป...');
+      setPlayerError(true);
       if (socketRef.current) {
         socketRef.current.emit('next_song', { roomId });
       }
@@ -334,7 +350,19 @@ export default function MusicRoom() {
                     <YouTube 
                       key={playerKey}
                       videoId={queue[0]} 
-                      opts={{ width: '100%', height: '100%', playerVars: { autoplay: 1, controls: 1, rel: 0, enablejsapi: 1, origin: window.location.origin } }} 
+                      opts={{
+                        width: '100%',
+                        height: '100%',
+                        playerVars: {
+                          autoplay: 1,
+                          controls: 1,
+                          rel: 0,
+                          enablejsapi: 1,
+                          origin: window.location.origin,
+                          playsinline: 1,
+                        },
+                        host: 'https://www.youtube.com'
+                      }} 
                       className="w-full h-full"
                       containerClassName="w-full h-full pointer-events-auto"
                       onReady={onPlayerReady} 

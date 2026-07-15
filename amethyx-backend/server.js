@@ -15,10 +15,16 @@ app.get('/', (req, res) => {
 
 const server = http.createServer(app);
 
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,https://amethyx-music-gang.onrender.com,https://www.amethyx-music-gang.onrender.com")
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+
 const io = new Server(server, {
     cors: {
-        origin: "http://localhost:5173",
-        methods: ["GET", "POST"]
+        origin: allowedOrigins,
+        methods: ["GET", "POST"],
+        credentials: true
     }
 });
 

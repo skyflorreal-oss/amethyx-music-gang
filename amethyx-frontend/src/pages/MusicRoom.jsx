@@ -57,6 +57,10 @@ export default function MusicRoom() {
         setRoomName(data.roomName);
         setRoomOwner(data.owner);
         setQueue(data.playlist || []);
+        if ((data.playlist || []).length > 0) {
+          setPlayerError(false);
+          setPlayerKey(k => k + 1);
+        }
         initialSyncData.current = { status: data.status, videoTime: data.videoTime };
         if (playerRef.current && data.playlist.length > 0) {
             applySync(data.status, data.videoTime);

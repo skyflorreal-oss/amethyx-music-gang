@@ -281,7 +281,12 @@ export default function MusicRoom() {
       if (!response.ok) {
         throw new Error(data.message || 'เกิดข้อผิดพลาดในการค้นหาเพลง');
       }
-      setSearchResults(data);
+      if (!Array.isArray(data) || data.length === 0) {
+        setSearchResults([]);
+        setSearchError('ไม่พบเพลงที่ค้นหานี้');
+      } else {
+        setSearchResults(data);
+      }
     } catch (error) {
       console.error(error);
       setSearchError(error.message || 'เกิดข้อผิดพลาดในการค้นหาเพลง');

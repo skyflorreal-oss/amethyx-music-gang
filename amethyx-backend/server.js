@@ -89,14 +89,15 @@ app.get('/api/search', async (req, res) => {
     }
 
     try {
-        const result = await ytSearch(query);
-        const videos = (result && result.videos) ? result.videos.slice(0, 10).map(video => ({
-            videoId: video.videoId,
-            title: video.title,
-            channel: video.author.name || video.author || 'Unknown',
-            duration: video.timestamp || video.duration.toString(),
-            thumbnail: video.thumbnail
-        })) : [];
+        const result = await ytSearch({ query });
+        const videos = (result && Array.isArray(result.videos)) ? result.videos.slice(0, 10).map(video => ({
+            videoId: video.videoId || '',
+            title: video.title || 'Unknown title',
+            channel: (video.author && (video.author.name || video.author)) || 'Unknown',
+            duration: video.timestamp || (typeof video.duration === 'string' ? video.duration : (video.duration ? String(video.duration) : 'Unknown')),
+            thumbnail: video.thumbnail || (video.videoId ? `https://img.youtube.com/vi/${video.videoId}/hqdefault.jpg` : '')
+        })).filter(video => video.videoId) : [];
+
         res.json(videos);
     } catch (error) {
         console.error('YT search error', error);
